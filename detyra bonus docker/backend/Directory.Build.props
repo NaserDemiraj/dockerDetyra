@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup>
+    <Name>CodeLab API</Name>
+    <Description>Interactive Code Execution Platform Backend</Description>
+    <Author>CodeLab Team</Author>
+    <Company>CodeLab</Company>
+    <Product>CodeLab</Product>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+</Project>

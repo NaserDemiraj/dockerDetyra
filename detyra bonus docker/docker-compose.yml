@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # Backend API (C# ASP.NET Core)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: codelab-backend
+    ports:
+      - "5000:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Server=db;Database=CodeLabDB;User Id=sa;Password=YourPassword@123;
+      - DockerSettings__Host=unix:///var/run/docker.sock
+    depends_on:
+      - db
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - codelab-network
+
+  # Frontend (React)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: codelab-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:5000/api
+    depends_on:
+      - backend
+    networks:
+      - codelab-network
+
+  # Database (SQL Server)
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: codelab-db
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=YourPassword@123
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    networks:
+      - codelab-network
+
+volumes:
+  sqlserver_data:
+
+networks:
+  codelab-network:
+    driver: bridge

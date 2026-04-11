@@ -1,0 +1,41 @@
+# General
+.DS_Store
+*.log
+*.swp
+*.swo
+*~
+
+# Backend (C#)
+backend/bin/
+backend/obj/
+backend/*.user
+backend/*.suo
+backend/.vs/
+backend/appsettings.Development.json
+
+# Frontend (Node)
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+
+# Worker
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local

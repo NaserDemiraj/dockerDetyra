@@ -1,0 +1,153 @@
+.editor-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #0d1117;
+}
+
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  padding: 12px 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.navbar h1 {
+  margin: 0;
+  color: #58a6ff;
+  font-size: 20px;
+}
+
+.logout-btn {
+  background: #da3633;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.logout-btn:hover {
+  background: #f85149;
+}
+
+.editor-main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  flex: 1;
+  background: #30363d;
+  overflow: hidden;
+}
+
+.editor-panel,
+.output-panel {
+  display: flex;
+  flex-direction: column;
+  background: #0d1117;
+  overflow: hidden;
+}
+
+.editor-header {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  align-items: center;
+}
+
+.language-select {
+  flex: 1;
+  padding: 8px 12px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.execute-btn {
+  background: #238636;
+  color: white;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.execute-btn:hover:not(:disabled) {
+  background: #2ea043;
+}
+
+.execute-btn:disabled {
+  background: #6e40aa;
+  opacity: 0.5;
+}
+
+#code-editor {
+  flex: 1;
+  resize: none;
+  border: none;
+  padding: 12px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  background: #0d1117;
+  color: #c9d1d9;
+}
+
+.output-panel {
+  position: relative;
+  overflow: auto;
+}
+
+.output-panel h3 {
+  margin: 0;
+  padding: 12px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 13px;
+}
+
+.error-box,
+.output-box {
+  padding: 12px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.error-box {
+  background: rgba(248, 81, 73, 0.05);
+  border-top: 1px solid #30363d;
+}
+
+.error-box strong {
+  color: #f85149;
+}
+
+.error-box pre {
+  color: #f85149;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  margin-top: 8px;
+  white-space: pre-wrap;
+}
+
+.output-box pre {
+  color: #7ee787;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.placeholder {
+  color: #6e40aa;
+  text-align: center;
+  padding: 20px;
+  margin: 0;
+}
