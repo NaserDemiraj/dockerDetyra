@@ -12,13 +12,11 @@ namespace CodeLabAPI.Services
     {
         private readonly ApplicationDbContext _context;
         private readonly IConfiguration _configuration;
-        private readonly IDockerService _dockerService;
 
-        public AuthService(ApplicationDbContext context, IConfiguration configuration, IDockerService dockerService)
+        public AuthService(ApplicationDbContext context, IConfiguration configuration)
         {
             _context = context;
             _configuration = configuration;
-            _dockerService = dockerService;
         }
 
         public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
@@ -37,11 +35,6 @@ namespace CodeLabAPI.Services
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
-            // Create personal container for user
-            var containerId = await _dockerService.CreateUserContainerAsync(user.Id);
-            user.ContainerId = containerId;
-            await _context.SaveChangesAsync();
-
             var token = GenerateJwtToken(user);
             return new AuthResponse
             {
@@ -58,13 +51,6 @@ namespace CodeLabAPI.Services
             if (user == null || !VerifyPassword(request.Password, user.PasswordHash))
                 return new AuthResponse { Success = false, Message = "Invalid credentials" };
 
-            // Ensure the user has a running container (recreate if it was deleted)
-            if (string.IsNullOrWhiteSpace(user.ContainerId))
-            {
-                user.ContainerId = await _dockerService.CreateUserContainerAsync(user.Id);
-                await _context.SaveChangesAsync();
-            }
-
             var token = GenerateJwtToken(user);
             return new AuthResponse
             {
@@ -75,15 +61,11 @@ namespace CodeLabAPI.Services
             };
         }
 
-        public async Task LogoutAsync(int userId)
+        public Task LogoutAsync(int userId)
         {
-            var user = _context.Users.FirstOrDefault(u => u.Id == userId);
-            if (user != null && !string.IsNullOrWhiteSpace(user.ContainerId))
-            {
-                await _dockerService.DeleteUserContainerAsync(user.ContainerId);
-                user.ContainerId = null;
-                await _context.SaveChangesAsync();
-            }
+            // Containers are ephemeral (created and deleted per execution),
+            // so there is no persistent container to clean up on logout.
+            return Task.CompletedTask;
         }
 
         public string GenerateJwtToken(User user)

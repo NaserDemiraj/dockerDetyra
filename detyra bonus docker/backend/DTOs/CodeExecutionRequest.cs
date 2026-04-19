@@ -11,6 +11,7 @@ namespace CodeLabAPI.DTOs
         public bool Success { get; set; }
         public string Output { get; set; } = string.Empty;
         public string? Error { get; set; }
+        public string? ErrorType { get; set; }
         public int ExecutionTimeMs { get; set; }
     }
 }

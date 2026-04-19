@@ -12,6 +12,9 @@ backend/*.user
 backend/*.suo
 backend/.vs/
 backend/appsettings.Development.json
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
 
 # Frontend (Node)
 frontend/node_modules/
