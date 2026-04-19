@@ -63,7 +63,7 @@ class CodeExecutor:
             }
 
     def execute_csharp(self, code):
-        """Execute C# code (compilation-aware fallback)"""
+        """Execute C# code (currently unsupported in this worker image)."""
         start = time.time()
         try:
             dotnet = shutil.which("dotnet")

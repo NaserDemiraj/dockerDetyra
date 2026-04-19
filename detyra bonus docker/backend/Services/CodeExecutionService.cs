@@ -34,16 +34,13 @@ namespace CodeLabAPI.Services
                     request.Code);
                 var executionTime = (int)(DateTime.UtcNow - startTime).TotalMilliseconds;
 
-                var errorType = GetErrorType(result.Error);
-                var formattedError = string.IsNullOrWhiteSpace(result.Error)
-                    ? null
-                    : $"{errorType}: {result.Error}";
+                var errorType = result.ErrorType ?? GetErrorType(result.Error);
 
                 return new CodeExecutionResponse
                 {
                     Success = result.Success,
                     Output = result.Output,
-                    Error = formattedError,
+                    Error = result.Error,
                     ErrorType = result.Success ? null : errorType,
                     ExecutionTimeMs = executionTime
                 };
@@ -54,7 +51,7 @@ namespace CodeLabAPI.Services
                 return new CodeExecutionResponse
                 {
                     Success = false,
-                    Error = "internal_error: Execution failed: " + ex.Message,
+                    Error = "Execution failed: " + ex.Message,
                     ErrorType = "internal_error"
                 };
             }

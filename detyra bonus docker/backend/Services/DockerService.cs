@@ -17,7 +17,7 @@ namespace CodeLabAPI.Services
         {
             try
             {
-                var containerName = $"codelab-user-{userId}-{Guid.NewGuid():N}";
+                var containerName = $"codelab-exec-{userId}-{Guid.NewGuid():N}";
                 var cmd = $"docker run -d --name {containerName} -m 512m --cpus 0.5 --network none codelab-worker tail -f /dev/null";
 
                 var result = await RunDockerCommandAsync(cmd);
@@ -38,7 +38,7 @@ namespace CodeLabAPI.Services
             }
         }
 
-        public async Task<(bool Success, string Output, string? Error)> ExecuteCodeInContainerAsync(
+        public async Task<(bool Success, string Output, string? Error, string? ErrorType)> ExecuteCodeInContainerAsync(
             string containerId, 
             string language, 
             string code)
@@ -50,7 +50,7 @@ namespace CodeLabAPI.Services
                 var containerStatus = await RunDockerCommandAsync($"docker ps --filter id={containerId} --format {{{{.State}}}}");
                 if (string.IsNullOrWhiteSpace(containerStatus.StdOut))
                 {
-                    return (Success: false, Output: "", Error: "Container is not running. Please try again.");
+                    return (Success: false, Output: "", Error: "Container is not running. Please try again.", ErrorType: "runtime_exception");
                 }
 
                 var codeFile = $"code_{Guid.NewGuid()}.{GetFileExtension(language)}";
@@ -62,7 +62,7 @@ namespace CodeLabAPI.Services
                 var copyResult = await RunDockerCommandAsync(copyCmd);
                 if (copyResult.ExitCode != 0)
                 {
-                    return (Success: false, Output: "", Error: $"Failed to copy code to container: {copyResult.StdErr}");
+                    return (Success: false, Output: "", Error: $"Failed to copy code to container: {copyResult.StdErr}", ErrorType: "runtime_exception");
                 }
 
                 var command = language.ToLower() == "python" 
@@ -76,7 +76,7 @@ namespace CodeLabAPI.Services
 
                 if (isOomKilled)
                 {
-                    return (Success: false, Output: "", Error: "MEMORY_LIMIT_EXCEEDED: Code exceeded the 512MB memory limit.");
+                    return (Success: false, Output: "", Error: "Code exceeded the 512MB memory limit.", ErrorType: "memory_limit_violation");
                 }
 
                 if (executionResult.ExitCode != 0 && string.IsNullOrWhiteSpace(executionResult.StdOut))
@@ -84,13 +84,13 @@ namespace CodeLabAPI.Services
                     var errorText = string.IsNullOrWhiteSpace(executionResult.StdErr)
                         ? "Container execution failed."
                         : executionResult.StdErr;
-                    return (Success: false, Output: "", Error: errorText);
+                    return (Success: false, Output: "", Error: errorText, ErrorType: "runtime_exception");
                 }
 
                 var rawOutput = executionResult.StdOut.Trim();
                 if (string.IsNullOrWhiteSpace(rawOutput))
                 {
-                    return (Success: false, Output: "", Error: "No response returned by execution worker.");
+                    return (Success: false, Output: "", Error: "No response returned by execution worker.", ErrorType: "runtime_exception");
                 }
 
                 try
@@ -102,24 +102,25 @@ namespace CodeLabAPI.Services
 
                     if (workerResponse == null)
                     {
-                        return (Success: false, Output: "", Error: "Invalid worker response.");
+                        return (Success: false, Output: "", Error: "Invalid worker response.", ErrorType: "runtime_exception");
                     }
 
                     return (
                         Success: workerResponse.Success,
                         Output: workerResponse.Output ?? "",
-                        Error: workerResponse.Error
+                        Error: workerResponse.Error,
+                        ErrorType: workerResponse.ErrorType
                     );
                 }
                 catch (JsonException)
                 {
-                    return (Success: false, Output: rawOutput, Error: "Invalid execution response format.");
+                    return (Success: false, Output: rawOutput, Error: "Invalid execution response format.", ErrorType: "runtime_exception");
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Code execution failed in container");
-                return (Success: false, Output: "", Error: ex.Message);
+                return (Success: false, Output: "", Error: ex.Message, ErrorType: "runtime_exception");
             }
             finally
             {
@@ -182,7 +183,14 @@ namespace CodeLabAPI.Services
 
                     if (!string.IsNullOrEmpty(error))
                     {
-                        _logger.LogDebug("Docker stderr: {DockerError}", error);
+                        if (process.ExitCode != 0)
+                        {
+                            _logger.LogWarning("Docker command failed ({ExitCode}): {DockerError}", process.ExitCode, error);
+                        }
+                        else
+                        {
+                            _logger.LogDebug("Docker stderr: {DockerError}", error);
+                        }
                     }
 
                     return new DockerCommandResult
@@ -219,6 +227,7 @@ namespace CodeLabAPI.Services
             public bool Success { get; set; }
             public string? Output { get; set; }
             public string? Error { get; set; }
+            public string? ErrorType { get; set; }
         }
     }
 }
