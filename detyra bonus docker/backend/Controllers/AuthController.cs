@@ -20,19 +20,37 @@ namespace CodeLabAPI.Controllers
         [HttpPost("register")]
         public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterRequest request)
         {
-            var response = await _authService.RegisterAsync(request);
-            if (!response.Success)
-                return BadRequest(response);
-            return Ok(response);
+            try
+            {
+                var response = await _authService.RegisterAsync(request);
+                if (!response.Success)
+                    return BadRequest(response);
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                var logger = HttpContext.RequestServices.GetRequiredService<ILogger<AuthController>>();
+                logger.LogError(ex, "Unhandled error during registration");
+                return StatusCode(500, new AuthResponse { Success = false, Message = "An unexpected error occurred. Please try again." });
+            }
         }
 
         [HttpPost("login")]
         public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginRequest request)
         {
-            var response = await _authService.LoginAsync(request);
-            if (!response.Success)
-                return Unauthorized(response);
-            return Ok(response);
+            try
+            {
+                var response = await _authService.LoginAsync(request);
+                if (!response.Success)
+                    return Unauthorized(response);
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                var logger = HttpContext.RequestServices.GetRequiredService<ILogger<AuthController>>();
+                logger.LogError(ex, "Unhandled error during login");
+                return StatusCode(500, new AuthResponse { Success = false, Message = "An unexpected error occurred. Please try again." });
+            }
         }
 
         [HttpPost("logout")]

@@ -54,14 +54,16 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     try
     {
         db.Database.EnsureCreated();
+        logger.LogInformation("Database initialized successfully.");
     }
     catch (Exception ex)
     {
-        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "An error occurred while creating the database.");
+        logger.LogCritical(ex, "Failed to initialize the database. The application cannot start.");
+        throw;
     }
 }
 
