@@ -88,7 +88,7 @@
   opacity: 0.5;
 }
 
-#code-editor {
+.code-editor {
   flex: 1;
   resize: none;
   border: none;

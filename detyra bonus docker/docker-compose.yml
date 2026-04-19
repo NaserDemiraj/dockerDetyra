@@ -11,12 +11,11 @@ services:
       - "5000:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Data Source=codelab.db
+      - ConnectionStrings__DefaultConnection=Data Source=/data/codelab.db
       - DockerSettings__Host=unix:///var/run/docker.sock
-    depends_on:
-      - db
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - sqlite_data:/data
     networks:
       - codelab-network
 
@@ -35,22 +34,8 @@ services:
     networks:
       - codelab-network
 
-  # Database (SQL Server)
-  db:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: codelab-db
-    environment:
-      - ACCEPT_EULA=Y
-      - SA_PASSWORD=YourPassword@123
-    ports:
-      - "1433:1433"
-    volumes:
-      - sqlserver_data:/var/opt/mssql
-    networks:
-      - codelab-network
-
 volumes:
-  sqlserver_data:
+  sqlite_data:
 
 networks:
   codelab-network:

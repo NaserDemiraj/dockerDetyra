@@ -9,7 +9,9 @@ import json
 import subprocess
 import time
 import shutil
+import os
 import re
+import tempfile
 
 class CodeExecutor:
     def __init__(self):
@@ -28,7 +30,7 @@ class CodeExecutor:
                 cwd="/tmp"
             )
             execution_time = int((time.time() - start) * 1000)
-            
+
             output = (result.stdout + result.stderr)[:self.max_output]
             error = None
             error_type = None
@@ -63,26 +65,74 @@ class CodeExecutor:
             }
 
     def execute_csharp(self, code):
-        """Execute C# code (currently unsupported in this worker image)."""
+        """Execute C# code using Mono (mcs compiler + mono runtime)"""
         start = time.time()
+        temp_dir = tempfile.mkdtemp()
         try:
-            dotnet = shutil.which("dotnet")
-            if not dotnet:
+            # Wrap bare statements in a class/Main if the code doesn't define its own
+            if "class " not in code and "static void Main" not in code and "static async" not in code:
+                csharp_program = (
+                    "using System;\n"
+                    "using System.Collections.Generic;\n"
+                    "using System.Linq;\n"
+                    "using System.Text;\n"
+                    "class Program {\n"
+                    "    static void Main(string[] args) {\n"
+                    f"        {code}\n"
+                    "    }\n"
+                    "}\n"
+                )
+            else:
+                csharp_program = code
+
+            cs_file = os.path.join(temp_dir, "program.cs")
+            exe_file = os.path.join(temp_dir, "program.exe")
+
+            with open(cs_file, "w") as f:
+                f.write(csharp_program)
+
+            # Compile with mcs
+            compile_result = subprocess.run(
+                ["mcs", f"-out:{exe_file}", cs_file],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=temp_dir
+            )
+
+            if compile_result.returncode != 0:
                 return {
                     "success": False,
                     "output": "",
-                    "error": "C# Compilation Error: .NET SDK/runtime is not installed in this worker image.",
+                    "error": "Compile Error:\n" + compile_result.stderr,
                     "error_type": "compilation_error",
                     "execution_time": int((time.time() - start) * 1000),
                     "language": "csharp"
                 }
 
+            # Run with mono
+            run_result = subprocess.run(
+                ["mono", exe_file],
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                cwd=temp_dir
+            )
+
+            execution_time = int((time.time() - start) * 1000)
+            output = (run_result.stdout + run_result.stderr)[:self.max_output]
+            error = None
+            error_type = None
+            if run_result.returncode != 0:
+                error = run_result.stderr or "Runtime error"
+                error_type = "runtime_exception"
+
             return {
-                "success": False,
-                "output": "",
-                "error": "C# Compilation Error: C# execution is not configured in this worker container yet.",
-                "error_type": "compilation_error",
-                "execution_time": int((time.time() - start) * 1000),
+                "success": run_result.returncode == 0,
+                "output": output,
+                "error": error,
+                "error_type": error_type,
+                "execution_time": execution_time,
                 "language": "csharp"
             }
         except subprocess.TimeoutExpired:
@@ -98,11 +148,13 @@ class CodeExecutor:
             return {
                 "success": False,
                 "output": "",
-                "error": f"C# Compilation Error: {str(e)}",
-                "error_type": "compilation_error",
+                "error": f"C# Error: {str(e)}",
+                "error_type": "runtime_exception",
                 "execution_time": int((time.time() - start) * 1000),
                 "language": "csharp"
             }
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _categorize_python_error(self, return_code, stderr_text):
         error_text = (stderr_text or "").strip()
@@ -152,17 +204,17 @@ if __name__ == "__main__":
                 "execution_time": 0
             }))
             sys.exit(1)
-        
+
         language = sys.argv[1]
         code_file = sys.argv[2]
-        
+
         # Read code from file
         with open(code_file, "r") as f:
             code = f.read()
-        
+
         executor = CodeExecutor()
         result = executor.execute(language, code)
-        
+
         print(json.dumps(result))
     except Exception as e:
         print(json.dumps({

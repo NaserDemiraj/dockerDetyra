@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { codeApi } from '../services/api';
+import { authApi, codeApi } from '../services/api';
 import '../styles/EditorPage.css';
+
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 function EditorPage({ onLogout }) {
   const [language, setLanguage] = useState('python');
@@ -13,11 +15,30 @@ function EditorPage({ onLogout }) {
   const navigate = useNavigate();
   const textareaRef = useRef(null);
 
+  // Clean up container when the browser tab/window is closed without explicit logout
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const token = localStorage.getItem('token');
+      if (token) {
+        fetch(`${API_BASE_URL}/auth/logout`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          keepalive: true,
+        });
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
   const handleLanguageChange = (e) => {
     const newLang = e.target.value;
     setLanguage(newLang);
-    
-    // Set initial code for language
+
     if (newLang === 'python') {
       setCode('# Write your Python code here\nprint("Hello, World!")');
     } else {
@@ -34,9 +55,9 @@ function EditorPage({ onLogout }) {
     try {
       const response = await codeApi.execute(language, code);
       const data = response.data;
-      
+
       setExecutionTime(data.executionTimeMs || 0);
-      
+
       if (data.success) {
         setOutput(data.output || '(No output)');
       } else {
@@ -51,7 +72,12 @@ function EditorPage({ onLogout }) {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await authApi.logout();
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
     localStorage.removeItem('token');
     onLogout();
     navigate('/login');
@@ -78,18 +104,18 @@ function EditorPage({ onLogout }) {
                 <option value="csharp">C# / C#</option>
               </select>
             </div>
-            <button 
-              className="execute-btn" 
-              onClick={handleExecute} 
+            <button
+              className="execute-btn"
+              onClick={handleExecute}
               disabled={loading}
             >
               {loading ? '⏳ Executing...' : '▶️ Execute'}
             </button>
           </div>
-          <textarea 
+          <textarea
             ref={textareaRef}
             className="code-editor"
-            value={code} 
+            value={code}
             onChange={handleCodeChange}
             placeholder="Write your code here..."
             spellCheck="false"

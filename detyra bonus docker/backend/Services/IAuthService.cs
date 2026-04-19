@@ -7,6 +7,7 @@ namespace CodeLabAPI.Services
     {
         Task<AuthResponse> RegisterAsync(RegisterRequest request);
         Task<AuthResponse> LoginAsync(LoginRequest request);
+        Task LogoutAsync(int userId);
         string GenerateJwtToken(User user);
     }
 }

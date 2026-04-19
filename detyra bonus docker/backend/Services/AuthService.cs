@@ -49,16 +49,23 @@ namespace CodeLabAPI.Services
         {
             var user = _context.Users.FirstOrDefault(u => u.Username == request.Username);
             if (user == null || !VerifyPassword(request.Password, user.PasswordHash))
-                return await Task.FromResult(new AuthResponse { Success = false, Message = "Invalid credentials" });
+                return new AuthResponse { Success = false, Message = "Invalid credentials" };
 
             var token = GenerateJwtToken(user);
-            return await Task.FromResult(new AuthResponse
+            return new AuthResponse
             {
                 Success = true,
                 Message = "Login successful",
                 Token = token,
                 User = new UserDto { Id = user.Id, Username = user.Username, Email = user.Email }
-            });
+            };
+        }
+
+        public Task LogoutAsync(int userId)
+        {
+            // Containers are ephemeral (created and deleted per execution),
+            // so there is no persistent container to clean up on logout.
+            return Task.CompletedTask;
         }
 
         public string GenerateJwtToken(User user)
