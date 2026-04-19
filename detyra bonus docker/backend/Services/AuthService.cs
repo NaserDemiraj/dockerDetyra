@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using CodeLabAPI.Data;
 using CodeLabAPI.DTOs;
@@ -21,33 +22,40 @@ namespace CodeLabAPI.Services
 
         public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
         {
-            if (_context.Users.Any(u => u.Email == request.Email || u.Username == request.Username))
-                return new AuthResponse { Success = false, Message = "User already exists" };
-
-            var passwordHash = HashPassword(request.Password);
-            var user = new User
+            try
             {
-                Username = request.Username,
-                Email = request.Email,
-                PasswordHash = passwordHash
-            };
+                if (await _context.Users.AnyAsync(u => u.Email == request.Email || u.Username == request.Username))
+                    return new AuthResponse { Success = false, Message = "User already exists" };
 
-            _context.Users.Add(user);
-            await _context.SaveChangesAsync();
+                var passwordHash = HashPassword(request.Password);
+                var user = new User
+                {
+                    Username = request.Username,
+                    Email = request.Email,
+                    PasswordHash = passwordHash
+                };
 
-            var token = GenerateJwtToken(user);
-            return new AuthResponse
+                _context.Users.Add(user);
+                await _context.SaveChangesAsync();
+
+                var token = GenerateJwtToken(user);
+                return new AuthResponse
+                {
+                    Success = true,
+                    Message = "Registration successful",
+                    Token = token,
+                    User = new UserDto { Id = user.Id, Username = user.Username, Email = user.Email }
+                };
+            }
+            catch (Exception ex)
             {
-                Success = true,
-                Message = "Registration successful",
-                Token = token,
-                User = new UserDto { Id = user.Id, Username = user.Username, Email = user.Email }
-            };
+                throw new InvalidOperationException("Registration failed due to a server error.", ex);
+            }
         }
 
         public async Task<AuthResponse> LoginAsync(LoginRequest request)
         {
-            var user = _context.Users.FirstOrDefault(u => u.Username == request.Username);
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
             if (user == null || !VerifyPassword(request.Password, user.PasswordHash))
                 return new AuthResponse { Success = false, Message = "Invalid credentials" };
 
