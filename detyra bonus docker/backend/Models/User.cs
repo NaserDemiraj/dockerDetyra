@@ -7,6 +7,5 @@ namespace CodeLabAPI.Models
         public required string Email { get; set; }
         public required string PasswordHash { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-        public string? ContainerId { get; set; }
     }
 }

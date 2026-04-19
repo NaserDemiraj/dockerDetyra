@@ -12,13 +12,11 @@ namespace CodeLabAPI.Services
     {
         private readonly ApplicationDbContext _context;
         private readonly IConfiguration _configuration;
-        private readonly IDockerService _dockerService;
 
-        public AuthService(ApplicationDbContext context, IConfiguration configuration, IDockerService dockerService)
+        public AuthService(ApplicationDbContext context, IConfiguration configuration)
         {
             _context = context;
             _configuration = configuration;
-            _dockerService = dockerService;
         }
 
         public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
@@ -35,11 +33,6 @@ namespace CodeLabAPI.Services
             };
 
             _context.Users.Add(user);
-            await _context.SaveChangesAsync();
-
-            // Create personal container for user
-            var containerId = await _dockerService.CreateUserContainerAsync(user.Id);
-            user.ContainerId = containerId;
             await _context.SaveChangesAsync();
 
             var token = GenerateJwtToken(user);

@@ -18,45 +18,30 @@ namespace CodeLabAPI.Services
 
         public async Task<CodeExecutionResponse> ExecuteCodeAsync(int userId, CodeExecutionRequest request)
         {
+            string? containerId = null;
             try
             {
                 var user = _context.Users.FirstOrDefault(u => u.Id == userId);
                 if (user == null)
                     return new CodeExecutionResponse { Success = false, Error = "User not found" };
 
-                // Check if user has a valid container, recreate if missing
-                if (string.IsNullOrWhiteSpace(user.ContainerId))
-                {
-                    user.ContainerId = await _dockerService.CreateUserContainerAsync(userId);
-                    _context.SaveChanges();
-                }
+                containerId = await _dockerService.CreateUserContainerAsync(userId);
 
                 var startTime = DateTime.UtcNow;
                 var result = await _dockerService.ExecuteCodeInContainerAsync(
-                    user.ContainerId,
+                    containerId,
                     request.Language,
                     request.Code);
                 var executionTime = (int)(DateTime.UtcNow - startTime).TotalMilliseconds;
 
-                // If container is dead, recreate it
-                if (!result.Success && result.Error?.Contains("not running") == true)
-                {
-                    user.ContainerId = await _dockerService.CreateUserContainerAsync(userId);
-                    _context.SaveChanges();
-                    
-                    // Retry execution
-                    result = await _dockerService.ExecuteCodeInContainerAsync(
-                        user.ContainerId,
-                        request.Language,
-                        request.Code);
-                    executionTime += (int)(DateTime.UtcNow - DateTime.UtcNow.AddMilliseconds(-executionTime)).TotalMilliseconds;
-                }
+                var errorType = result.ErrorType ?? GetErrorType(result.Error);
 
                 return new CodeExecutionResponse
                 {
                     Success = result.Success,
                     Output = result.Output,
                     Error = result.Error,
+                    ErrorType = result.Success ? null : errorType,
                     ExecutionTimeMs = executionTime
                 };
             }
@@ -66,9 +51,34 @@ namespace CodeLabAPI.Services
                 return new CodeExecutionResponse
                 {
                     Success = false,
-                    Error = "Execution failed: " + ex.Message
+                    Error = "Execution failed: " + ex.Message,
+                    ErrorType = "internal_error"
                 };
             }
+            finally
+            {
+                if (!string.IsNullOrWhiteSpace(containerId))
+                {
+                    await _dockerService.DeleteUserContainerAsync(containerId);
+                }
+            }
+        }
+
+        private static string GetErrorType(string? error)
+        {
+            if (string.IsNullOrWhiteSpace(error))
+            {
+                return "runtime_exception";
+            }
+
+            var normalized = error.ToLowerInvariant();
+            if (normalized.Contains("memory_limit_exceeded") || normalized.Contains("memoryerror") || normalized.Contains("out of memory"))
+                return "memory_limit_violation";
+            if (normalized.Contains("syntaxerror") || normalized.Contains("indentationerror") || normalized.Contains("compilation error"))
+                return "compilation_error";
+            if (normalized.Contains("timeout") || normalized.Contains("infinite loop"))
+                return "timeout";
+            return "runtime_exception";
         }
     }
 }

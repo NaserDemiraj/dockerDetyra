@@ -1,16 +1,15 @@
 using System.Diagnostics;
-using System.Text;
+using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace CodeLabAPI.Services
 {
     public class DockerService : IDockerService
     {
-        private readonly IConfiguration _configuration;
         private readonly ILogger<DockerService> _logger;
 
         public DockerService(IConfiguration configuration, ILogger<DockerService> logger)
         {
-            _configuration = configuration;
             _logger = logger;
         }
 
@@ -18,21 +17,19 @@ namespace CodeLabAPI.Services
         {
             try
             {
-                var containerName = $"codelab-user-{userId}";
-                
-                // First, check if container already exists
-                var existing = await RunDockerCommandAsync($"docker ps -a --filter name={containerName} --format {{{{.ID}}}}");
-                if (!string.IsNullOrWhiteSpace(existing))
+                var containerName = $"codelab-exec-{userId}-{Guid.NewGuid():N}";
+                var cmd = $"docker run -d --name {containerName} -m 512m --cpus 0.5 --network none codelab-worker tail -f /dev/null";
+
+                var result = await RunDockerCommandAsync(cmd);
+                if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.StdOut))
                 {
-                    // Remove old container if exists
-                    await RunDockerCommandAsync($"docker rm -f {containerName}");
+                    var error = string.IsNullOrWhiteSpace(result.StdErr) ? "Unknown docker run error" : result.StdErr;
+                    throw new InvalidOperationException($"Failed to create container: {error}");
                 }
 
-                var cmd = $"docker run -d --name {containerName} -m 512m --cpus 0.5 codelab-worker sleep 3600";
-                
-                var output = await RunDockerCommandAsync(cmd);
-                _logger.LogInformation($"Created container for user {userId}: {output}");
-                return output.Trim();
+                var containerId = result.StdOut.Trim();
+                _logger.LogInformation("Created execution container for user {UserId}: {ContainerId}", userId, containerId);
+                return containerId;
             }
             catch (Exception ex)
             {
@@ -41,31 +38,31 @@ namespace CodeLabAPI.Services
             }
         }
 
-        public async Task<(bool Success, string Output, string? Error)> ExecuteCodeInContainerAsync(
+        public async Task<(bool Success, string Output, string? Error, string? ErrorType)> ExecuteCodeInContainerAsync(
             string containerId, 
             string language, 
             string code)
         {
+            var tempFilePath = string.Empty;
             try
             {
                 // Check if container is still running
                 var containerStatus = await RunDockerCommandAsync($"docker ps --filter id={containerId} --format {{{{.State}}}}");
-                if (string.IsNullOrWhiteSpace(containerStatus))
+                if (string.IsNullOrWhiteSpace(containerStatus.StdOut))
                 {
-                    return (Success: false, Output: "", Error: "Container is not running. Please try again.");
+                    return (Success: false, Output: "", Error: "Container is not running. Please try again.", ErrorType: "runtime_exception");
                 }
 
-                var codeFile = $"code_{Guid.NewGuid()}.py";
-                var filePath = Path.Combine(Path.GetTempPath(), codeFile);
-                await File.WriteAllTextAsync(filePath, code);
+                var codeFile = $"code_{Guid.NewGuid()}.{GetFileExtension(language)}";
+                tempFilePath = Path.Combine(Path.GetTempPath(), codeFile);
+                await File.WriteAllTextAsync(tempFilePath, code);
 
                 var containerPath = $"/tmp/{codeFile}";
-                var copyCmd = $"docker cp \"{filePath}\" {containerId}:{containerPath}";
-                var copyOutput = await RunDockerCommandAsync(copyCmd);
-
-                if (copyOutput.Contains("Error") || copyOutput.Contains("error"))
+                var copyCmd = $"docker cp \"{tempFilePath}\" {containerId}:{containerPath}";
+                var copyResult = await RunDockerCommandAsync(copyCmd);
+                if (copyResult.ExitCode != 0)
                 {
-                    return (Success: false, Output: "", Error: $"Failed to copy code to container: {copyOutput}");
+                    return (Success: false, Output: "", Error: $"Failed to copy code to container: {copyResult.StdErr}", ErrorType: "runtime_exception");
                 }
 
                 var command = language.ToLower() == "python" 
@@ -73,26 +70,85 @@ namespace CodeLabAPI.Services
                     : $"python /app/executor.py csharp \"{containerPath}\"";
 
                 var runCmd = $"docker exec {containerId} {command}";
-                var output = await RunDockerCommandAsync(runCmd);
+                var executionResult = await RunDockerCommandAsync(runCmd);
+                var oomResult = await RunDockerCommandAsync($"docker inspect --format='{{{{.State.OOMKilled}}}}' {containerId}");
+                var isOomKilled = oomResult.StdOut.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
 
-                if (File.Exists(filePath))
-                    File.Delete(filePath);
+                if (isOomKilled)
+                {
+                    return (Success: false, Output: "", Error: "Code exceeded the 512MB memory limit.", ErrorType: "memory_limit_violation");
+                }
 
-                return (Success: true, Output: output, Error: null);
+                if (executionResult.ExitCode != 0 && string.IsNullOrWhiteSpace(executionResult.StdOut))
+                {
+                    var errorText = string.IsNullOrWhiteSpace(executionResult.StdErr)
+                        ? "Container execution failed."
+                        : executionResult.StdErr;
+                    return (Success: false, Output: "", Error: errorText, ErrorType: "runtime_exception");
+                }
+
+                var rawOutput = executionResult.StdOut.Trim();
+                if (string.IsNullOrWhiteSpace(rawOutput))
+                {
+                    return (Success: false, Output: "", Error: "No response returned by execution worker.", ErrorType: "runtime_exception");
+                }
+
+                try
+                {
+                    var workerResponse = JsonSerializer.Deserialize<WorkerExecutionResponse>(rawOutput, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+
+                    if (workerResponse == null)
+                    {
+                        return (Success: false, Output: "", Error: "Invalid worker response.", ErrorType: "runtime_exception");
+                    }
+
+                    return (
+                        Success: workerResponse.Success,
+                        Output: workerResponse.Output ?? "",
+                        Error: workerResponse.Error,
+                        ErrorType: workerResponse.ErrorType
+                    );
+                }
+                catch (JsonException)
+                {
+                    return (Success: false, Output: rawOutput, Error: "Invalid execution response format.", ErrorType: "runtime_exception");
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Code execution failed in container");
-                return (Success: false, Output: "", Error: ex.Message);
+                return (Success: false, Output: "", Error: ex.Message, ErrorType: "runtime_exception");
+            }
+            finally
+            {
+                if (!string.IsNullOrWhiteSpace(tempFilePath) && File.Exists(tempFilePath))
+                {
+                    File.Delete(tempFilePath);
+                }
             }
         }
 
         public async Task DeleteUserContainerAsync(string containerId)
         {
+            if (string.IsNullOrWhiteSpace(containerId))
+            {
+                return;
+            }
+
             try
             {
-                await RunDockerCommandAsync($"docker rm -f {containerId}");
-                _logger.LogInformation($"Deleted container: {containerId}");
+                var result = await RunDockerCommandAsync($"docker rm -f {containerId}");
+                if (result.ExitCode == 0)
+                {
+                    _logger.LogInformation("Deleted container: {ContainerId}", containerId);
+                }
+                else
+                {
+                    _logger.LogWarning("Failed to delete container {ContainerId}: {Error}", containerId, result.StdErr);
+                }
             }
             catch (Exception ex)
             {
@@ -100,18 +156,19 @@ namespace CodeLabAPI.Services
             }
         }
 
-        private async Task<string> RunDockerCommandAsync(string command)
+        private async Task<DockerCommandResult> RunDockerCommandAsync(string command)
         {
             return await Task.Run(() =>
             {
                 try
                 {
+                    var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
                     var process = new Process
                     {
                         StartInfo = new ProcessStartInfo
                         {
-                            FileName = "cmd.exe",
-                            Arguments = $"/c {command}",
+                            FileName = isWindows ? "cmd.exe" : "/bin/bash",
+                            Arguments = isWindows ? $"/c {command}" : $"-lc \"{command.Replace("\"", "\\\"")}\"",
                             UseShellExecute = false,
                             RedirectStandardOutput = true,
                             RedirectStandardError = true,
@@ -125,9 +182,23 @@ namespace CodeLabAPI.Services
                     process.WaitForExit();
 
                     if (!string.IsNullOrEmpty(error))
-                        _logger.LogError($"Docker error: {error}");
+                    {
+                        if (process.ExitCode != 0)
+                        {
+                            _logger.LogWarning("Docker command failed ({ExitCode}): {DockerError}", process.ExitCode, error);
+                        }
+                        else
+                        {
+                            _logger.LogDebug("Docker stderr: {DockerError}", error);
+                        }
+                    }
 
-                    return output;
+                    return new DockerCommandResult
+                    {
+                        ExitCode = process.ExitCode,
+                        StdOut = output,
+                        StdErr = error
+                    };
                 }
                 catch (Exception ex)
                 {
@@ -143,5 +214,20 @@ namespace CodeLabAPI.Services
             "csharp" => "cs",
             _ => "txt"
         };
+
+        private class DockerCommandResult
+        {
+            public int ExitCode { get; set; }
+            public string StdOut { get; set; } = string.Empty;
+            public string StdErr { get; set; } = string.Empty;
+        }
+
+        private class WorkerExecutionResponse
+        {
+            public bool Success { get; set; }
+            public string? Output { get; set; }
+            public string? Error { get; set; }
+            public string? ErrorType { get; set; }
+        }
     }
 }
