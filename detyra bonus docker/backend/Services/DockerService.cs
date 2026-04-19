@@ -19,6 +19,15 @@ namespace CodeLabAPI.Services
             try
             {
                 var containerName = $"codelab-user-{userId}";
+                
+                // First, check if container already exists
+                var existing = await RunDockerCommandAsync($"docker ps -a --filter name={containerName} --format {{{{.ID}}}}");
+                if (!string.IsNullOrWhiteSpace(existing))
+                {
+                    // Remove old container if exists
+                    await RunDockerCommandAsync($"docker rm -f {containerName}");
+                }
+
                 var cmd = $"docker run -d --name {containerName} -m 512m --cpus 0.5 codelab-worker sleep 3600";
                 
                 var output = await RunDockerCommandAsync(cmd);
@@ -39,21 +48,35 @@ namespace CodeLabAPI.Services
         {
             try
             {
-                var filePath = Path.Combine(Path.GetTempPath(), $"code_{Guid.NewGuid()}.{GetFileExtension(language)}");
+                // Check if container is still running
+                var containerStatus = await RunDockerCommandAsync($"docker ps --filter id={containerId} --format {{{{.State}}}}");
+                if (string.IsNullOrWhiteSpace(containerStatus))
+                {
+                    return (Success: false, Output: "", Error: "Container is not running. Please try again.");
+                }
+
+                var codeFile = $"code_{Guid.NewGuid()}.py";
+                var filePath = Path.Combine(Path.GetTempPath(), codeFile);
                 await File.WriteAllTextAsync(filePath, code);
 
-                var containerPath = $"/tmp/{Path.GetFileName(filePath)}";
-                var copyCmd = $"docker cp {filePath} {containerId}:{containerPath}";
-                await RunDockerCommandAsync(copyCmd);
+                var containerPath = $"/tmp/{codeFile}";
+                var copyCmd = $"docker cp \"{filePath}\" {containerId}:{containerPath}";
+                var copyOutput = await RunDockerCommandAsync(copyCmd);
+
+                if (copyOutput.Contains("Error") || copyOutput.Contains("error"))
+                {
+                    return (Success: false, Output: "", Error: $"Failed to copy code to container: {copyOutput}");
+                }
 
                 var command = language.ToLower() == "python" 
-                    ? $"python {containerPath}"
-                    : $"dotnet {containerPath}";
+                    ? $"python /app/executor.py python \"{containerPath}\""
+                    : $"python /app/executor.py csharp \"{containerPath}\"";
 
                 var runCmd = $"docker exec {containerId} {command}";
                 var output = await RunDockerCommandAsync(runCmd);
 
-                File.Delete(filePath);
+                if (File.Exists(filePath))
+                    File.Delete(filePath);
 
                 return (Success: true, Output: output, Error: null);
             }

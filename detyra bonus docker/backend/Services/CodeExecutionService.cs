@@ -24,8 +24,12 @@ namespace CodeLabAPI.Services
                 if (user == null)
                     return new CodeExecutionResponse { Success = false, Error = "User not found" };
 
+                // Check if user has a valid container, recreate if missing
                 if (string.IsNullOrWhiteSpace(user.ContainerId))
+                {
                     user.ContainerId = await _dockerService.CreateUserContainerAsync(userId);
+                    _context.SaveChanges();
+                }
 
                 var startTime = DateTime.UtcNow;
                 var result = await _dockerService.ExecuteCodeInContainerAsync(
@@ -33,6 +37,20 @@ namespace CodeLabAPI.Services
                     request.Language,
                     request.Code);
                 var executionTime = (int)(DateTime.UtcNow - startTime).TotalMilliseconds;
+
+                // If container is dead, recreate it
+                if (!result.Success && result.Error?.Contains("not running") == true)
+                {
+                    user.ContainerId = await _dockerService.CreateUserContainerAsync(userId);
+                    _context.SaveChanges();
+                    
+                    // Retry execution
+                    result = await _dockerService.ExecuteCodeInContainerAsync(
+                        user.ContainerId,
+                        request.Language,
+                        request.Code);
+                    executionTime += (int)(DateTime.UtcNow - DateTime.UtcNow.AddMilliseconds(-executionTime)).TotalMilliseconds;
+                }
 
                 return new CodeExecutionResponse
                 {

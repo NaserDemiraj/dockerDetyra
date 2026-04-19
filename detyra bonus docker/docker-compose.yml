@@ -11,7 +11,7 @@ services:
       - "5000:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Server=db;Database=CodeLabDB;User Id=sa;Password=YourPassword@123;
+      - ConnectionStrings__DefaultConnection=Data Source=codelab.db
       - DockerSettings__Host=unix:///var/run/docker.sock
     depends_on:
       - db

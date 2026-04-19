@@ -9,47 +9,43 @@ function EditorPage({ onLogout }) {
   const [output, setOutput] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [executionTime, setExecutionTime] = useState(0);
   const navigate = useNavigate();
-  const editorRef = useRef(null);
-
-  useEffect(() => {
-    if (window.CodeMirror) {
-      editorRef.current = window.CodeMirror.fromTextArea(
-        document.getElementById('code-editor'),
-        {
-          lineNumbers: true,
-          mode: language === 'python' ? 'python' : 'text/x-csharp',
-          theme: 'default',
-          fontSize: '14px',
-        }
-      );
-      editorRef.current.setValue(code);
-      editorRef.current.on('change', () => setCode(editorRef.current.getValue()));
-    }
-  }, []);
+  const textareaRef = useRef(null);
 
   const handleLanguageChange = (e) => {
     const newLang = e.target.value;
     setLanguage(newLang);
-    if (editorRef.current) {
-      editorRef.current.setOption('mode', newLang === 'python' ? 'python' : 'text/x-csharp');
+    
+    // Set initial code for language
+    if (newLang === 'python') {
+      setCode('# Write your Python code here\nprint("Hello, World!")');
+    } else {
+      setCode('// Write your C# code here\nConsole.WriteLine("Hello, World!");');
     }
   };
 
   const handleExecute = async () => {
     setError('');
     setOutput('');
+    setExecutionTime(0);
     setLoading(true);
 
     try {
       const response = await codeApi.execute(language, code);
-      if (response.data.success) {
-        setOutput(response.data.output);
+      const data = response.data;
+      
+      setExecutionTime(data.executionTimeMs || 0);
+      
+      if (data.success) {
+        setOutput(data.output || '(No output)');
       } else {
-        setError(response.data.error || 'Execution failed');
+        setError(data.error || 'Execution failed');
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to execute code');
+      const errorMsg = err.response?.data?.error || err.message || 'Failed to execute code';
+      setError(errorMsg);
+      console.error('Execution error:', err);
     } finally {
       setLoading(false);
     }
@@ -61,41 +57,67 @@ function EditorPage({ onLogout }) {
     navigate('/login');
   };
 
+  const handleCodeChange = (e) => {
+    setCode(e.target.value);
+  };
+
   return (
     <div className="editor-container">
       <div className="navbar">
-        <h1>CodeLab Editor</h1>
+        <h1>💻 CodeLab Editor</h1>
         <button className="logout-btn" onClick={handleLogout}>Logout</button>
       </div>
 
       <div className="editor-main">
         <div className="editor-panel">
           <div className="editor-header">
-            <select value={language} onChange={handleLanguageChange} className="language-select">
-              <option value="python">Python</option>
-              <option value="csharp">C#</option>
-            </select>
-            <button className="execute-btn" onClick={handleExecute} disabled={loading}>
-              {loading ? 'Executing...' : 'Execute'}
+            <div className="language-section">
+              <label>Language:</label>
+              <select value={language} onChange={handleLanguageChange} className="language-select">
+                <option value="python">🐍 Python</option>
+                <option value="csharp">C# / C#</option>
+              </select>
+            </div>
+            <button 
+              className="execute-btn" 
+              onClick={handleExecute} 
+              disabled={loading}
+            >
+              {loading ? '⏳ Executing...' : '▶️ Execute'}
             </button>
           </div>
-          <textarea id="code-editor" value={code} onChange={(e) => setCode(e.target.value)} />
+          <textarea 
+            ref={textareaRef}
+            className="code-editor"
+            value={code} 
+            onChange={handleCodeChange}
+            placeholder="Write your code here..."
+            spellCheck="false"
+          />
         </div>
 
         <div className="output-panel">
-          <h3>Output</h3>
+          <h3>📊 Output & Results</h3>
           {error && (
             <div className="error-box">
-              <strong>Error:</strong>
+              <strong>❌ Error:</strong>
               <pre>{error}</pre>
             </div>
           )}
           {output && (
             <div className="output-box">
               <pre>{output}</pre>
+              {executionTime > 0 && (
+                <div className="execution-time">⏱️ Execution time: {executionTime}ms</div>
+              )}
             </div>
           )}
-          {!error && !output && <p className="placeholder">Output will appear here...</p>}
+          {!error && !output && !loading && (
+            <p className="placeholder">👉 Write code and click Execute to see results...</p>
+          )}
+          {loading && (
+            <p className="placeholder">⌛ Executing your code...</p>
+          )}
         </div>
       </div>
     </div>
