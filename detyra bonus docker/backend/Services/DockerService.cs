@@ -1,5 +1,6 @@
 using System.Diagnostics;
-using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace CodeLabAPI.Services
 {
@@ -16,132 +17,129 @@ namespace CodeLabAPI.Services
 
         public async Task<string> CreateUserContainerAsync(int userId)
         {
-            try
-            {
-                var containerName = $"codelab-user-{userId}";
-                
-                // First, check if container already exists
-                var existing = await RunDockerCommandAsync($"docker ps -a --filter name={containerName} --format {{{{.ID}}}}");
-                if (!string.IsNullOrWhiteSpace(existing))
-                {
-                    // Remove old container if exists
-                    await RunDockerCommandAsync($"docker rm -f {containerName}");
-                }
+            var containerName = $"codelab-user-{userId}";
 
-                var cmd = $"docker run -d --name {containerName} -m 512m --cpus 0.5 codelab-worker sleep 3600";
-                
-                var output = await RunDockerCommandAsync(cmd);
-                _logger.LogInformation($"Created container for user {userId}: {output}");
-                return output.Trim();
-            }
-            catch (Exception ex)
+            // Remove any existing container with this name (force remove)
+            await RunShellAsync($"docker rm -f {containerName} 2>/dev/null || true");
+
+            var memLimit = _configuration.GetValue<int>("DockerSettings:MemoryLimit", 512);
+            var cpuLimit = _configuration.GetValue<double>("DockerSettings:CpuLimit", 0.5);
+            var cpuStr = cpuLimit.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            var (_, _, exitCode) = await RunShellAsync(
+                $"docker run -d --name {containerName} -m {memLimit}m --cpus {cpuStr} codelab-worker sleep infinity");
+
+            if (exitCode != 0)
             {
-                _logger.LogError(ex, $"Failed to create container for user {userId}");
-                throw;
+                _logger.LogError("Failed to create container {ContainerName} for user {UserId}", containerName, userId);
+                throw new Exception($"Failed to create Docker container for user {userId}");
             }
+
+            _logger.LogInformation("Created container {ContainerName} for user {UserId}", containerName, userId);
+            return containerName;
         }
 
         public async Task<(bool Success, string Output, string? Error)> ExecuteCodeInContainerAsync(
-            string containerId, 
-            string language, 
+            string containerName,
+            string language,
             string code)
         {
             try
             {
-                // Check if container is still running
-                var containerStatus = await RunDockerCommandAsync($"docker ps --filter id={containerId} --format {{{{.State}}}}");
-                if (string.IsNullOrWhiteSpace(containerStatus))
+                // Check if the container is currently running
+                var (inspectOut, _, _) = await RunShellAsync(
+                    $"docker inspect --format {{{{.State.Running}}}} {containerName} 2>/dev/null");
+                if (inspectOut.Trim() != "true")
                 {
-                    return (Success: false, Output: "", Error: "Container is not running. Please try again.");
+                    return (false, "", "Container is not running. Please try again.");
                 }
 
-                var codeFile = $"code_{Guid.NewGuid()}.py";
-                var filePath = Path.Combine(Path.GetTempPath(), codeFile);
-                await File.WriteAllTextAsync(filePath, code);
+                var codeFileName = $"code_{Guid.NewGuid()}";
+                var localPath = Path.Combine(Path.GetTempPath(), codeFileName);
+                await File.WriteAllTextAsync(localPath, code);
 
-                var containerPath = $"/tmp/{codeFile}";
-                var copyCmd = $"docker cp \"{filePath}\" {containerId}:{containerPath}";
-                var copyOutput = await RunDockerCommandAsync(copyCmd);
+                var containerPath = $"/tmp/{codeFileName}";
+                var (_, cpErr, cpExit) = await RunShellAsync($"docker cp \"{localPath}\" {containerName}:{containerPath}");
 
-                if (copyOutput.Contains("Error") || copyOutput.Contains("error"))
+                if (File.Exists(localPath))
+                    File.Delete(localPath);
+
+                if (cpExit != 0)
+                    return (false, "", $"Failed to copy code to container: {cpErr}");
+
+                var lang = language.ToLower();
+                var (execOut, execErr, _) = await RunShellAsync(
+                    $"docker exec {containerName} python3 /app/executor.py {lang} \"{containerPath}\"");
+
+                // Parse JSON output produced by executor.py
+                var jsonText = string.IsNullOrWhiteSpace(execOut) ? execErr : execOut;
+                try
                 {
-                    return (Success: false, Output: "", Error: $"Failed to copy code to container: {copyOutput}");
+                    var result = JsonSerializer.Deserialize<ExecutorResult>(jsonText.Trim());
+                    if (result != null)
+                        return (result.Success, result.Output ?? "", result.Error);
+                }
+                catch (JsonException)
+                {
+                    _logger.LogWarning("Could not parse executor output as JSON: {Output}", jsonText);
                 }
 
-                var command = language.ToLower() == "python" 
-                    ? $"python /app/executor.py python \"{containerPath}\""
-                    : $"python /app/executor.py csharp \"{containerPath}\"";
-
-                var runCmd = $"docker exec {containerId} {command}";
-                var output = await RunDockerCommandAsync(runCmd);
-
-                if (File.Exists(filePath))
-                    File.Delete(filePath);
-
-                return (Success: true, Output: output, Error: null);
+                return (true, jsonText, null);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Code execution failed in container");
-                return (Success: false, Output: "", Error: ex.Message);
+                _logger.LogError(ex, "Code execution failed in container {ContainerName}", containerName);
+                return (false, "", ex.Message);
             }
         }
 
-        public async Task DeleteUserContainerAsync(string containerId)
+        public async Task DeleteUserContainerAsync(string containerName)
         {
             try
             {
-                await RunDockerCommandAsync($"docker rm -f {containerId}");
-                _logger.LogInformation($"Deleted container: {containerId}");
+                await RunShellAsync($"docker rm -f {containerName}");
+                _logger.LogInformation("Deleted container: {ContainerName}", containerName);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Failed to delete container {containerId}");
+                _logger.LogError(ex, "Failed to delete container {ContainerName}", containerName);
             }
         }
 
-        private async Task<string> RunDockerCommandAsync(string command)
+        private async Task<(string Output, string Error, int ExitCode)> RunShellAsync(string command)
         {
             return await Task.Run(() =>
             {
-                try
+                var psi = new ProcessStartInfo
                 {
-                    var process = new Process
-                    {
-                        StartInfo = new ProcessStartInfo
-                        {
-                            FileName = "cmd.exe",
-                            Arguments = $"/c {command}",
-                            UseShellExecute = false,
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true,
-                            CreateNoWindow = true
-                        }
-                    };
+                    FileName = "/bin/sh",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add(command);
 
-                    process.Start();
-                    var output = process.StandardOutput.ReadToEnd();
-                    var error = process.StandardError.ReadToEnd();
-                    process.WaitForExit();
+                var process = new Process { StartInfo = psi };
+                process.Start();
+                var output = process.StandardOutput.ReadToEnd();
+                var error = process.StandardError.ReadToEnd();
+                process.WaitForExit();
 
-                    if (!string.IsNullOrEmpty(error))
-                        _logger.LogError($"Docker error: {error}");
+                if (!string.IsNullOrEmpty(error))
+                    _logger.LogDebug("Shell stderr: {Error}", error);
 
-                    return output;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to execute docker command");
-                    throw;
-                }
+                return (output.TrimEnd(), error.TrimEnd(), process.ExitCode);
             });
         }
 
-        private static string GetFileExtension(string language) => language.ToLower() switch
-        {
-            "python" => "py",
-            "csharp" => "cs",
-            _ => "txt"
-        };
+        private record ExecutorResult(
+            [property: JsonPropertyName("success")] bool Success,
+            [property: JsonPropertyName("output")] string? Output,
+            [property: JsonPropertyName("error")] string? Error,
+            [property: JsonPropertyName("execution_time")] int ExecutionTime,
+            [property: JsonPropertyName("language")] string? Language
+        );
     }
 }

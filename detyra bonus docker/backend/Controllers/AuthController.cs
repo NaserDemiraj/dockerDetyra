@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 using CodeLabAPI.DTOs;
 using CodeLabAPI.Services;
 
@@ -31,6 +33,18 @@ namespace CodeLabAPI.Controllers
             if (!response.Success)
                 return Unauthorized(response);
             return Ok(response);
+        }
+
+        [HttpPost("logout")]
+        [Authorize]
+        public async Task<IActionResult> Logout()
+        {
+            var userIdClaim = User.FindFirst("id");
+            if (userIdClaim == null || !int.TryParse(userIdClaim.Value, out var userId))
+                return Unauthorized();
+
+            await _authService.LogoutAsync(userId);
+            return Ok(new { Success = true, Message = "Logged out successfully" });
         }
     }
 }

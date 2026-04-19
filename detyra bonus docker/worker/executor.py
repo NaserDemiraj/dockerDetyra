@@ -56,30 +56,69 @@ class CodeExecutor:
             }
 
     def execute_csharp(self, code):
-        """Execute C# code - simplified for demo"""
+        """Execute C# code using Mono (mcs compiler + mono runtime)"""
+        import tempfile
+        import shutil
         start = time.time()
+        temp_dir = tempfile.mkdtemp()
         try:
-            # Create a minimal C# program
-            csharp_program = f"""
-using System;
-class Program {{
-    static void Main() {{
-        {code}
-    }}
-}}
-"""
-            # Create temp file
-            temp_file = "/tmp/temp_program.cs"
-            with open(temp_file, "w") as f:
+            # Wrap code in a class/Main if it looks like raw statements
+            if "class " not in code and "static void Main" not in code and "static async" not in code:
+                csharp_program = (
+                    "using System;\n"
+                    "using System.Collections.Generic;\n"
+                    "using System.Linq;\n"
+                    "using System.Text;\n"
+                    "class Program {\n"
+                    "    static void Main(string[] args) {\n"
+                    f"        {code}\n"
+                    "    }\n"
+                    "}\n"
+                )
+            else:
+                csharp_program = code
+
+            cs_file = os.path.join(temp_dir, "program.cs")
+            exe_file = os.path.join(temp_dir, "program.exe")
+
+            with open(cs_file, "w") as f:
                 f.write(csharp_program)
-            
-            # Compile (requires mono or dotnet to be installed in container)
-            # For now, return a simulated result showing it would work
+
+            # Compile with mcs
+            compile_result = subprocess.run(
+                ["mcs", f"-out:{exe_file}", cs_file],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=temp_dir
+            )
+
+            if compile_result.returncode != 0:
+                return {
+                    "success": False,
+                    "output": "",
+                    "error": "❌ Compile Error:\n" + compile_result.stderr,
+                    "execution_time": int((time.time() - start) * 1000),
+                    "language": "csharp"
+                }
+
+            # Run with mono
+            run_result = subprocess.run(
+                ["mono", exe_file],
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                cwd=temp_dir
+            )
+
+            execution_time = int((time.time() - start) * 1000)
+            output = (run_result.stdout + run_result.stderr)[:self.max_output]
+
             return {
-                "success": True,
-                "output": "C# execution would compile and run the code\n(Full .NET runtime needed in production)",
-                "error": None,
-                "execution_time": int((time.time() - start) * 1000),
+                "success": run_result.returncode == 0,
+                "output": output,
+                "error": run_result.stderr if run_result.returncode != 0 else None,
+                "execution_time": execution_time,
                 "language": "csharp"
             }
         except subprocess.TimeoutExpired:
@@ -94,10 +133,12 @@ class Program {{
             return {
                 "success": False,
                 "output": "",
-                "error": f"C# Compilation Error: {str(e)}",
+                "error": f"C# Error: {str(e)}",
                 "execution_time": int((time.time() - start) * 1000),
                 "language": "csharp"
             }
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def execute(self, language, code):
         """Main execution method"""

@@ -56,16 +56,34 @@ namespace CodeLabAPI.Services
         {
             var user = _context.Users.FirstOrDefault(u => u.Username == request.Username);
             if (user == null || !VerifyPassword(request.Password, user.PasswordHash))
-                return await Task.FromResult(new AuthResponse { Success = false, Message = "Invalid credentials" });
+                return new AuthResponse { Success = false, Message = "Invalid credentials" };
+
+            // Ensure the user has a running container (recreate if it was deleted)
+            if (string.IsNullOrWhiteSpace(user.ContainerId))
+            {
+                user.ContainerId = await _dockerService.CreateUserContainerAsync(user.Id);
+                await _context.SaveChangesAsync();
+            }
 
             var token = GenerateJwtToken(user);
-            return await Task.FromResult(new AuthResponse
+            return new AuthResponse
             {
                 Success = true,
                 Message = "Login successful",
                 Token = token,
                 User = new UserDto { Id = user.Id, Username = user.Username, Email = user.Email }
-            });
+            };
+        }
+
+        public async Task LogoutAsync(int userId)
+        {
+            var user = _context.Users.FirstOrDefault(u => u.Id == userId);
+            if (user != null && !string.IsNullOrWhiteSpace(user.ContainerId))
+            {
+                await _dockerService.DeleteUserContainerAsync(user.ContainerId);
+                user.ContainerId = null;
+                await _context.SaveChangesAsync();
+            }
         }
 
         public string GenerateJwtToken(User user)
