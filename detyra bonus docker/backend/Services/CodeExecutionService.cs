@@ -18,14 +18,16 @@ namespace CodeLabAPI.Services
 
         public async Task<CodeExecutionResponse> ExecuteCodeAsync(int userId, CodeExecutionRequest request)
         {
-            string? containerId = null;
             try
             {
                 var user = _context.Users.FirstOrDefault(u => u.Id == userId);
                 if (user == null)
                     return new CodeExecutionResponse { Success = false, Error = "User not found" };
 
-                containerId = await _dockerService.CreateUserContainerAsync(userId);
+                // Use the persistent container created at login
+                var containerId = user.ActiveContainerId;
+                if (string.IsNullOrEmpty(containerId))
+                    return new CodeExecutionResponse { Success = false, Error = "No execution container available. Please login again." };
 
                 var startTime = DateTime.UtcNow;
                 var result = await _dockerService.ExecuteCodeInContainerAsync(
@@ -54,13 +56,6 @@ namespace CodeLabAPI.Services
                     Error = "Execution failed: " + ex.Message,
                     ErrorType = "internal_error"
                 };
-            }
-            finally
-            {
-                if (!string.IsNullOrWhiteSpace(containerId))
-                {
-                    await _dockerService.DeleteUserContainerAsync(containerId);
-                }
             }
         }
 

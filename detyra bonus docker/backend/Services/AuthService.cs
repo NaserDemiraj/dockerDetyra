@@ -13,11 +13,15 @@ namespace CodeLabAPI.Services
     {
         private readonly ApplicationDbContext _context;
         private readonly IConfiguration _configuration;
+        private readonly IDockerService _dockerService;
+        private readonly ILogger<AuthService> _logger;
 
-        public AuthService(ApplicationDbContext context, IConfiguration configuration)
+        public AuthService(ApplicationDbContext context, IConfiguration configuration, IDockerService dockerService, ILogger<AuthService> logger)
         {
             _context = context;
             _configuration = configuration;
+            _dockerService = dockerService;
+            _logger = logger;
         }
 
         public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
@@ -59,6 +63,29 @@ namespace CodeLabAPI.Services
             if (user == null || !VerifyPassword(request.Password, user.PasswordHash))
                 return new AuthResponse { Success = false, Message = "Invalid credentials" };
 
+            // Create a persistent Docker container for this user if not already created
+            if (string.IsNullOrEmpty(user.ActiveContainerId))
+            {
+                try
+                {
+                    _logger.LogInformation("Creating Docker container for user {UserId}", user.Id);
+                    var containerId = await _dockerService.CreateUserContainerAsync(user.Id);
+                    _logger.LogInformation("Successfully created container {ContainerId} for user {UserId}", containerId, user.Id);
+                    user.ActiveContainerId = containerId;
+                    user.ContainerCreatedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to create execution container for user {UserId}", user.Id);
+                    return new AuthResponse { Success = false, Message = $"Failed to create execution container: {ex.Message}" };
+                }
+            }
+            else
+            {
+                _logger.LogInformation("User {UserId} already has container {ContainerId}", user.Id, user.ActiveContainerId);
+            }
+
             var token = GenerateJwtToken(user);
             return new AuthResponse
             {
@@ -69,11 +96,24 @@ namespace CodeLabAPI.Services
             };
         }
 
-        public Task LogoutAsync(int userId)
+        public async Task LogoutAsync(int userId)
         {
-            // Containers are ephemeral (created and deleted per execution),
-            // so there is no persistent container to clean up on logout.
-            return Task.CompletedTask;
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
+            if (user != null && !string.IsNullOrEmpty(user.ActiveContainerId))
+            {
+                try
+                {
+                    // Delete the persistent container when user logs out
+                    await _dockerService.DeleteUserContainerAsync(user.ActiveContainerId);
+                    user.ActiveContainerId = null;
+                    user.ContainerCreatedAt = null;
+                    await _context.SaveChangesAsync();
+                }
+                catch (Exception ex)
+                {
+                    // Log but don't throw - container cleanup is best effort
+                }
+            }
         }
 
         public string GenerateJwtToken(User user)
