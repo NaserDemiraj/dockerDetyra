@@ -55,10 +55,27 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    var authService = scope.ServiceProvider.GetRequiredService<IAuthService>();
     try
     {
         db.Database.EnsureCreated();
         logger.LogInformation("Database initialized successfully.");
+        
+        // Seed default test user if none exists
+        if (!db.Users.Any())
+        {
+            var registerRequest = new RegisterRequest 
+            { 
+                Username = "testuser", 
+                Email = "test@codelab.com", 
+                Password = "Test@123456" 
+            };
+            var result = authService.RegisterAsync(registerRequest).Result;
+            if (result.Success)
+            {
+                logger.LogInformation("Default test user created successfully.");
+            }
+        }
     }
     catch (Exception ex)
     {
